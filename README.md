@@ -68,3 +68,149 @@ While both approaches work, using the route parameter directly in the lambda fun
 Simplicity: Directly using the parameter in the lambda function is simpler and more readable.
 Type Safety: The parameter is strongly typed, reducing the risk of type conversion errors.
 Clean Code: Avoids additional code to extract the parameter from the route data manually.
+
+
+## Blocking Asynchronous Call
+`
+app.MapPost("/api/coupon",
+         (IMapper _mapper,
+         IValidator<CouponCreateDTO> _validation,
+         [FromBody] CouponCreateDTO coupon_createDTO) => 
+{
+   var validationResult = _validation.ValidateAsync(coupon_createDTO).GetAwaiter().GetResult();
+   // Further processing...
+});
+`
+Synchronous Execution: Although the method being called is asynchronous, GetAwaiter().GetResult() blocks the current thread until the asynchronous operation is complete.
+Thread Blocking: This can lead to thread pool starvation if used frequently in a high-concurrency environment, as it blocks a thread that could otherwise be used to process other requests.
+Deadlocks: It can cause deadlocks in some synchronization contexts, especially in UI applications or when there are certain types of synchronization contexts present (e.g., ASP.NET Classic).
+Simpler Code for Sync Contexts: It might be simpler in scenarios where you need to convert async code to sync, but it’s generally not recommended.
+
+## Fully Asynchronous Call
+`
+app.MapPost("/api/coupon",
+         async (IMapper _mapper,
+         IValidator<CouponCreateDTO> _validation,
+         [FromBody] CouponCreateDTO coupon_createDTO) => 
+{
+   var validationResult = await _validation.ValidateAsync(coupon_createDTO);
+   // Further processing...
+});
+`
+Asynchronous Execution: This approach allows the method to be fully asynchronous, which is non-blocking and yields the thread back to the thread pool while waiting for the asynchronous operation to complete.
+Better Performance and Scalability: It improves performance and scalability by not blocking threads, allowing the application to handle more concurrent requests efficiently.
+Avoids Deadlocks: This approach avoids the risk of deadlocks associated with blocking asynchronous calls.
+Modern Best Practice: Using await for asynchronous calls is the modern best practice in .NET applications.
+
+## When Blocking Asynchronous Calls is unavoidable
+
+Blocking asynchronous calls with `GetAwaiter().GetResult()` or similar methods (like `.Result` or `.Wait()`) is generally discouraged due to the potential issues it can cause, such as deadlocks and thread pool starvation. However, there are some scenarios where it might be necessary or where developers might find themselves needing to use it. Here are a few situations where blocking asynchronous calls might be considered necessary:
+
+### 1. Synchronous APIs
+
+#### Context:
+When working with APIs that do not support asynchronous operations and you need to call an asynchronous method.
+
+#### Example:
+You have a synchronous method that is part of an interface or a base class that you cannot change to async.
+
+```csharp
+public class SyncService
+{
+    private readonly IAsyncService _asyncService;
+
+    public SyncService(IAsyncService asyncService)
+    {
+        _asyncService = asyncService;
+    }
+
+    public void PerformSyncOperation()
+    {
+        var result = _asyncService.PerformAsyncOperation().GetAwaiter().GetResult();
+        // Continue with synchronous logic
+    }
+}
+```
+
+### 2. Application Startup Code
+
+#### Context:
+During application startup (e.g., in `Main` or `ConfigureServices` methods), where asynchronous code needs to run but the startup process itself is synchronous.
+
+#### Example:
+Initial configuration or setup that must complete before the application can start accepting requests.
+
+```csharp
+public static void Main(string[] args)
+{
+    var host = CreateHostBuilder(args).Build();
+
+    // Synchronously initialize async tasks
+    var asyncInitTask = host.Services.GetRequiredService<IAsyncInitializer>().InitializeAsync();
+    asyncInitTask.GetAwaiter().GetResult();
+
+    host.Run();
+}
+```
+
+### 3. Unit Testing
+
+#### Context:
+In some unit testing frameworks or scenarios, you might need to synchronously wait for an asynchronous operation to complete.
+
+#### Example:
+A test setup or teardown method that requires waiting for an asynchronous operation.
+
+```csharp
+[SetUp]
+public void Setup()
+{
+    var task = _asyncService.InitializeAsync();
+    task.GetAwaiter().GetResult();
+}
+
+[Test]
+public void TestMethod()
+{
+    var result = _asyncService.SomeAsyncMethod().GetAwaiter().GetResult();
+    Assert.AreEqual(expected, result);
+}
+```
+
+### 4. Legacy Code Integration
+
+#### Context:
+When integrating with legacy systems or libraries that do not support async/await, and you need to call asynchronous code from synchronous code.
+
+#### Example:
+Calling new asynchronous APIs from legacy synchronous code paths.
+
+```csharp
+public class LegacySystemAdapter
+{
+    private readonly INewAsyncService _newAsyncService;
+
+    public LegacySystemAdapter(INewAsyncService newAsyncService)
+    {
+        _newAsyncService = newAsyncService;
+    }
+
+    public void CallLegacyCode()
+    {
+        var result = _newAsyncService.PerformOperationAsync().GetAwaiter().GetResult();
+        // Use result in legacy code
+    }
+}
+```
+
+### Considerations and Risks
+
+- **Deadlocks:** Blocking calls can lead to deadlocks, especially in environments with synchronization contexts, like ASP.NET or UI applications.
+- **Thread Pool Starvation:** Blocking a thread that is waiting for an async operation can exhaust the thread pool under high load.
+- **Maintainability:** It can make code harder to maintain and reason about, as it mixes async and sync paradigms.
+
+### Best Practices
+
+- **Minimize Use:** Use blocking calls sparingly and only when absolutely necessary.
+- **Async All the Way:** Prefer using async/await all the way down the call stack to avoid the need for blocking calls.
+- **Isolate Blocking Calls:** If you must use blocking calls, isolate them in a way that minimizes their impact on the rest of the application.
